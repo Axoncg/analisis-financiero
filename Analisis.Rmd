@@ -1,3 +1,74 @@
+---
+title: "Explicación Analisis financiero"
+output: 
+  html_notebook: 
+    theme: united
+    toc: yes
+params:
+  tipo.demanda: "min"
+---
+
+# Introducción
+
+Este documento tiene como objetivo describir el proceso seguido para realizar el análisis de factibilidad economica-financiera del proyecto *Corredor Interoceanico de Guatemala*. Básicamente se revisan tres escenarios de negociación-operación y a estos se les realiza una valuación.
+
+Los escenarios de negociación a analizar en este documento son:
+
+  * Primer escenario:
+    * SIGSA^[SIGSA: Sistema Interoceánico de Guatemala] realiza la inversión en infraestructura y superestructura. Se encarga de la operación.
+  * Segundo Escenario:
+    * SIGSA realiza la inversión en infraestructura. Cobra un canon por concepto de concesión del proyecto, otro canon por el uso de la infraestructura. Adicionalmente se percibe un 5% de los ingresos brutos, definido como royalty.
+    * Un 3ro realiza la inversión en superestructura y se encarga de la operación.
+  * Tercer Escenario:
+    * SIGSA no realiza ninguna inversión. Cobra un canon por concepto de concesión del proyecto y el royalty definido anteriormente. 
+    * Un 3ro realiza la inversión en infraestructura y superestructura. Se encarga de la operación
+
+La metodología de valuación es la siguiente
+
+  1. El valor presente neto del proyecto si el proyecto utilizando el CPC[^CPC] como tasa de descuento. 
+  2. El valor presente neto del flujo de caja
+  3. El valor presente neto del accionista
+  
+[^CPC]: Costo Promedio de Capital o WACC por sus siglas en ingles
+  
+# Datos y consideraciones
+
+## Información principal
+
+La información que se utilizará para la evaluación de este proyecto se encuentra desglosada en distintos documentos, a continuación se listarán los datos a utilizar y sus fuentes.
+
+  * Demanda, Modelo ODEPAL (ILI con datos de ALATEC)
+  * Tarifas, Modelo ODEPAL (ILI)
+  * Costos, Modelo ODEPAL (ILI con datos de ALATEC)
+  * Inversiones, Modelo ODEPAL (ILI con datos de ALATEC)
+
+Cabe destacar, que una vez finalizado este análisis, se procederá a actualizar el modelo de demanda y tarifas, dejando para el final la actualización de los costos e inversiones. La idea principal es que se puedan modificar variables del modelo de demandas y tarifas para saber que impacto tendría en la valuación económica del proyecto.
+
+## Información secundaria
+
+Los datos que se utilizan para realizar el cálculo del costo de capital se toma de la información disponible en la pagina web de [Damodaran](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/home.htm). La información tomada especificamente es:
+
+  * [Betas](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html)
+  * [Tasas](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html)
+  
+Adicionalmente existen algunos parámetros que se toman como inputs al modelo de evaluación y que tienen incidencia en la valuación del proyecto. Estos son:
+
+  * Duración concesión Sistema Multimodal: `n.multi`
+  * Duración concesión Sistema Energía: `n.poli`
+  * Tasa de financiamiento: `r`
+  * Duración financiamiento: `n`
+  * Tasa valuación canones de concesión: `r.ice`
+  * Tasa de descuento: `CPC`, tomando como inputs la tasa de financiamiento y el valor esperado por los accionistas (CAPM)^[CAPM: Cost asset pricing model por sus siglas en ingles]
+  * Porcentaje de la inversión financiada: `pct.financiado`
+  * Tipo de demanda: `tipo.demanda` Esta puede ser la mínima o máxima, como se establece en el Modelo ODEPAL (ILI)
+  * ISR sobre utilidades: `isr2` Regimen sobre utilidades
+  * Porcentaje de royalty sobre los ingresos: `pct.royalty`
+  * Porcentaje de gastos de comercialización: `pct.gastos.comercializacion`
+  * Porcentaje de pago anticipado canones: `pct.pago.anticipado`
+  * Periodo de gracia pago de intereses: `pg`
+
+
+```{r carga de datos, message=FALSE, warning=FALSE, include=FALSE}
 
 require(shiny)
 require(tidyverse)
@@ -6,6 +77,7 @@ require(stringr)
 require(FinCal)
 require(scales)
 require(purrr)
+require(axonr)
 # # Información utilizada por la función para poder funcionar
 Demanda <- read_excel("app/Datos/Intermodal/Ingresos-2018.xlsx", sheet = "Demanda")
 Tarifas <- read_excel("app/Datos/Intermodal/Ingresos-2018.xlsx", sheet = "Tarifas")
@@ -28,65 +100,148 @@ isr               = 0.07
 isr2              = 0.25
 horizonte         = 2062
 regimen.fiscal    = TRUE ## en donde FALSE indica regimen sobre ingresos
-split.puertos     = 0.5
+split.puertos     = 0.50
 pct.royalty       = 0.05
 pct.gastos.comercializacion = 0.025
-pct.pago.anticipado = 0.05
-pg                = 1  ## periodo de gracia canon
+pct.pago.anticipado = 0.045
+pg                = 2  ## periodo de gracia canon
+
+```
+
+# Establecimiento de valores información secundaria
+
+Cómo se mencionó previamente existen una serie de parametros que se deben de definir a la hora de realizar la evaluación financiera. A continuación definiremos cual es el procedimiento utilizado para definir los valores de estos parámetros.
+
+## Duración de concesión por Sistema
+
+En el caso de los escenarios 2 y 3 de negociación existe una figura que por el momento se conoce como concesión. A lo largo de la vida del proyecto, después de los estudios de ILI, se han hablado de periodos de concesión con distintos interesados. Para el Sistema Multimodal se ha hablado de 50 años y para el Sistema de Energía de 30 años. Se utilizarán estos valores y se establecerá si son adecuados para ambos interesados en este escenario de negociación
+
+En el caso del financiamiento, se ha establecido un periodo de 30 años para poder realizar los pagos.
+
+## Tasas
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+
+  if (tasa.retorno.manual == TRUE) {
+    expected.return <- tasa.descuento
+  } else{
+    require(rvest)
+    url <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html"
+    url2 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html"
+    url3 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/wacc.htm"
+    
+    safe_read <- safely(read_html)
+    prueba <- safe_read(url)
+    
+    
+    if (is_null(prueba$result)) {
+      betas <- readRDS("app/Datos/Intermodal/betas2017-01-25.rds")
+      tasas <- readRDS("app/Datos/Intermodal/tasas2017-01-25.rds")
+      costo.deuda <- readRDS("app/Datos/Intermodal/costo.deuda2017-02-09.rds")
+      
+    } else{
+      betas <- read_html(url) %>% 
+        html_nodes(xpath = "/html/body/table") %>% 
+        html_table()
+      
+
+      
+      fecha.consulta <- Sys.Date()
+      # flname <- paste0("app/Datos/Intermodal/betas",fecha.consulta,".rds")
+      # saveRDS(object = betas ,file = flname)
+      
+      tasas <- read_html(url2) %>% 
+        html_table()
+      # flname <- paste0("app/Datos/Intermodal/tasas",fecha.consulta,".rds")
+      # saveRDS(object = tasas ,file = flname)
+      
+      costo.deuda <- read_html(url3) %>% 
+        html_table() %>% 
+        as.data.frame()
+      # flname <- paste0("app/Datos/Intermodal/costo.deuda",fecha.consulta,".rds")
+      # saveRDS(object = costo.deuda ,file = flname)
+    }
+    
+    
+    betas <- as.data.frame(betas)
+    names(betas) <- betas[1,]
+    betas <- betas[c(91,92),c(1,2,3)]
+    beta <- betas$`Average Unlevered Beta` %>% 
+      as.numeric() %>% 
+      mean()
+    
+    tasas <- as.data.frame(tasas)
+    names(tasas) <- tasas[2,]
+    
+    tasas  <- tasas[3:nrow(tasas),] 
+    tasas.promedio <- tail(tasas,4)
+    nombres <- c("periodo","SP500","3month.bill","10year.bond")
+    tasas <- tasas.promedio[1:4] 
+    names(tasas) <- nombres
+    tasas <- tasas[2:nrow(tasas),]
+    
+    rm <- tasas[2,2]
+    rf <- tasas[2,4]
+    rm <- rm %>% str_replace("%","")
+    rm <- as.numeric(rm)/100
+    
+    rf <- rf %>% str_replace("%","")
+    rf <- as.numeric(rf)/100
+    expected.return <- rf + beta*(rm - rf + (2.89 + 3.55)/100)
+    expected.return2 <- rf + beta*(rm - rf)
+    financial.data <- data.frame(expected.return, rf, rm,beta)
+    financial.data
+    expected.return <- financial.data[["expected.return"]]
+    
+    names(costo.deuda) <- costo.deuda[1,]
+    costo.deuda <- costo.deuda[2:nrow(costo.deuda),]
+    costo.deuda <- costo.deuda[c(90,91), c(1,7)]
+    costo.deuda$`Cost of Debt` <- costo.deuda$`Cost of Debt` %>% 
+      str_replace("%","") %>% 
+      as.numeric()/100
+    
+  }
+r <- mean(costo.deuda$`Cost of Debt`)
+wacc <- expected.return*(1 - pct.financiado) + pct.financiado*r
+wacc2 <- expected.return2*(1 - pct.financiado) + pct.financiado*r
+comparacion.wacc <- (wacc - wacc2)/wacc
+```
 
 
-# Leyendas data frame -----------------------------------------------------
+Como se describió previamente, se tienen que definir varias tasas que afectan directamente la valuación del proyecto. A continuación se describe como fueron establecidas.
 
-## ___@@@xx <- leyenda primaria
-## por ejemplo ingresos.M11 se refiere a los ingresos para la version de
-## inversion en infra y super por parte de sistema
-
-## ___ <- Es el nombre del df principal
-## @@ <- Se refiere a la parte evaluada, esta puede ser Sistema o Elemento
-## xx <- La primera x indica si sistema realiza inversion en infra y la segunda
-## si la realiza en super
-
-### Combinaciones de escenarios de negociación
-## 11 <- inversion en infra y superestructura por parte de sistema
-## 10 <- inversion en infra por parte de sistema y super por un tercero
-## 00 <- inversion en infra y super por parte de un tercero
-
-### Sistemas
-## M = multimodal completo
-## E = energia completo
-### Completo
-## Sistema =  multimodal + energia
-### Elementos
-## SJ = san jorge
-## SL = san luis
-## F = ferrocarril
-### Tipos de negociacion
-## SJf = san jorge + 1/2 ferrocarril
-## SLF = san luis + 1/2 ferrocarril
-
-
-
-# modelo.base <- function(n                 = 30,
-#                         r                 = 0.05, ## Tasa financiamiento
-#                         tasa.descuento    = 0.08,
-#                         pct.financiado    = 0.6,
-#                         tipo.demanda      = "min",
-#                         isr               = 0.07,
-#                         isr2              = 0.25,
-#                         horizonte         = 2062,
-#                         regimen.fiscal    = TRUE, ## en donde FALSE indica regimen sobre ingresos
-#                         split.puertos     = 0.5,
-#                         pct.royalty       = 0.05,
-#                         pct.gastos.comercializacion = 0.025,
-#                         tasa.retorno.manual = FALSE,
-#                         Demanda = Demanda,
-#                         Tarifas = Tarifas,
-#                         Costos  = Costos,
-#                         Inversiones = Inversiones,
-#                         Ingresos.poliducto = Ingresos.poliducto) {
-#   
+**Costo de Capital**, o el retorno esperado por los accionistas que invertirían en SIGSA, se valuará a través de la metodología de CAPM.
+Para su definición se deben de incluir algunos datos:
   
-  # Demanda -----------------------------------------------------------------
+  *  Risk free: Tomamos el promedio geométrico para el periodo 1967-2016 del T-Bond
+  *  Risk Market: Tomamos el promedio geométrico del S&P500 para el mismo periodo
+  `r knitr::kable(tasas, col.names = nombres, row.names = FALSE)`
+  *  Beta: Debido a que no existe información financiera de puentes terrestre, pública, utilizaremos las calculadas por Damodaran para este tipo de firmas alrededor del mundo que califican para las empresas de transporte o transporte por ferrocarril. A estas les sacamos un promedio para obtener la beta de este tipo de proyecto.
+  * Riesgo Pais y Default: Se agrega al risk premium un valor de 3.55% por el riesgo pais y 2.89% por el riesgo de Default basado en la calificación del país.
+  
+  `r knitr:: kable(betas, row.names = FALSE)`
+
+Esto nos da un valor de retorno esperado (Costo de Capital) que se puede ver en la siguiente tabla
+
+  `r knitr::kable(financial.data, row.names = FALSE)`
+
+**Costo de Deuda**, este es obtenido a través del costo de deuda que tienen las mismas empresas analizadas para obtener la deuda. Se toma el promedio de ambas industrias.
+  `r knitr::kable(costo.deuda, row.names = FALSE)`
+
+**Tasa de Descuento**, como se dijo anteriormente, esta sera calculada por el metodo WACC. En ese sentido, en un principio se estableció que un 60% de la inversión del proyecto se hiciera a través de financiamiento. Por lo que usaremos este porcentaje para establecer el wacc. Al realizar los calculos, su valor es de `r percent(wacc)`
+
+
+**Tasa de Descuento, canones**, para evaluar esta categoría se utilizará el valor de retorno esperado para los accionistas.
+
+## Porcentajes
+
+**Porcentaje pago anticipado canones**, este valor se establece en un `r percent(pct.pago.anticipado)`del valor total de la concesión.
+
+**Porcentaje Royalty**, este se estima en un 5% del valor de los ingresos.
+
+
+```{r carga informacion primaria, message=FALSE, warning=FALSE, include=FALSE}
+# Demanda -----------------------------------------------------------------
   
   Demanda <-   Demanda %>%
     gather(Año,TEUS,-Escenario) %>%
@@ -353,7 +508,7 @@ pg                = 1  ## periodo de gracia canon
     }
     
     
-    if(exists("Componente",df)) {
+    if (exists("Componente",df)) {
       escenario  <- escenario %>% mutate(Pago = Intereses + Amortizacion)
       escenario$Componente <- inversion.input$Componente
     } else {
@@ -453,93 +608,12 @@ pg                = 1  ## periodo de gracia canon
         IVA.Neto = if_else(lag(IVA.aux1) < 0 ,IVA.aux2, IVA.aux1)) %>% 
     map(select, -contains("aux"))
   
-  
-# Valorizacion ------------------------------------------------------------
-  
-  ### Calculo de la tasa de retorno esperada
-  
-  
-  if (tasa.retorno.manual == TRUE) {
-    expected.return <- tasa.descuento
-  } else{
-    require(rvest)
-    url <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html"
-    url2 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html"
-    url3 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/wacc.htm"
-    
-    safe_read <- safely(read_html)
-    prueba <- safe_read(url)
-    
-    
-    if (is_null(prueba$result)) {
-      betas <- readRDS("app/Datos/Intermodal/betas2017-01-25.rds")
-      tasas <- readRDS("app/Datos/Intermodal/tasas2017-01-25.rds")
-      costo.deuda <- readRDS("app/Datos/Intermodal/costo.deuda2017-02-09.rds")
-      
-    } else{
-      betas <- read_html(url) %>% 
-        html_nodes(xpath = "/html/body/table") %>% 
-        html_table()
-      
-      
-      
-      fecha.consulta <- Sys.Date()
-      # flname <- paste0("app/Datos/Intermodal/betas",fecha.consulta,".rds")
-      # saveRDS(object = betas ,file = flname)
-      
-      tasas <- read_html(url2) %>% 
-        html_table()
-      # flname <- paste0("app/Datos/Intermodal/tasas",fecha.consulta,".rds")
-      # saveRDS(object = tasas ,file = flname)
-      
-      costo.deuda <- read_html(url3) %>% 
-        html_table() %>% 
-        as.data.frame()
-      # flname <- paste0("app/Datos/Intermodal/costo.deuda",fecha.consulta,".rds")
-      # saveRDS(object = costo.deuda ,file = flname)
-    }
-    
-    
-    betas <- as.data.frame(betas)
-    names(betas) <- betas[1,]
-    betas <- betas[c(91,92),c(1,2,3)]
-    beta <- betas$`Average Unlevered Beta` %>% 
-      as.numeric() %>% 
-      mean()
-    
-    tasas <- as.data.frame(tasas)
-    names(tasas) <- tasas[2,]
-    
-    tasas  <- tasas[3:nrow(tasas),] 
-    tasas.promedio <- tail(tasas,4)
-    nombres <- c("periodo","SP500","3month.bill","10year.bond")
-    tasas <- tasas.promedio[1:4] 
-    names(tasas) <- nombres
-    tasas <- tasas[2:nrow(tasas),]
-    
-    rm <- tasas[2,2]
-    rf <- tasas[2,4]
-    rm <- rm %>% str_replace("%","")
-    rm <- as.numeric(rm)/100
-    
-    rf <- rf %>% str_replace("%","")
-    rf <- as.numeric(rf)/100
-    expected.return <- rf + beta*(rm - rf + (3.55+2.89)/100)
-    financial.data <- data.frame(expected.return, rf, rm,beta)
-    financial.data
-    expected.return <- financial.data[["expected.return"]]
-    
-    names(costo.deuda) <- costo.deuda[1,]
-    costo.deuda <- costo.deuda[2:nrow(costo.deuda),]
-    costo.deuda <- costo.deuda[c(90,91), c(1,7)]
-    costo.deuda$`Cost of Debt` <- costo.deuda$`Cost of Debt` %>% 
-      str_replace("%","") %>% 
-      as.numeric()/100
-    
-  }
-  
-  wacc <- expected.return*(1 - pct.financiado) + pct.financiado*mean(costo.deuda$`Cost of Debt`)
-  
+```
+
+
+# Evaluación de escenarios
+
+```{r Valor base, message=FALSE, warning=FALSE, include=FALSE}
 
   ### Creación de data frames que sirven de input para el calculo del VP base del 
   ### proyecto y VP del financiamiento en las modalidades: 
@@ -685,8 +759,6 @@ pg                = 1  ## periodo de gracia canon
   
   ### Calculo de vp del financiamiento para cada modalidad
   
-  
-  
   valor.sistema.completo.fin <- pmap(params.completo.fin, calcular_vpnf)
   valor.sistema11.fin <- pmap(params.sistema.fin, calcular_vpnf)
   valor.elemento11.fin <- pmap(params.elemento.fin, calcular_vpnf)
@@ -716,13 +788,41 @@ pg                = 1  ## periodo de gracia canon
         vp.base = formattable::currency(vp.base, digits = 0),
         vp.fin  = formattable::currency(vp.fin, digits = 0),
         vp.total  = formattable::currency(vp.total, digits = 0),
-        tir = formattable::percent(tir))
-  
+        tir = formattable::percent(tir)) %>% 
+    map(select, -vp.fin, -vp.total)
+
+valor1 <- resultado$Sistema
+
+
+```
+
+## Primer escenario de negociación
+
+Como se estableció al inicio de este análisis, en este caso SIGSA realiza la inversión en infraestructura y superestructura. A su vez, tambien se encarga de la operación. Podemos pensar en este escenario como el base, el cual es el que realmente valua cuanto vale este proyecto al completo. Si observamos los resultados obtenidos con los parámetros definidos previamente, obtenemos lo siguiente:
+
+`r knitr::kable(valor1, col.names = c("Sistema","VPN", "TIR"))`
+
+Estos valores pudiesen ser mayores, pero la inclusión del riesgo país en el análisis disminuye su valor. Ahora bien, nos da tambien una mayor certeza de cuanto vale el proyecto. En este caso el valor completo del proyecto es `r valor1$vp.base %>% sum()`.
+
+Cabe resaltar que el sistema multimodal se encuentra subdividido en varios elementos, siendo estos los 2 puertos y el ferrocarril. Debido a que toda la información tambien se encuentra clasificada para cada uno de estos, podemos observar el valor que aportan. 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+resultado$Elemento %>% filter(Elemento != "Poliductos") %>% 
+  knitr::kable(col.names=c("Elemento", "VPN", "TIR"))
+```
+
+El valor de los puertos no es el mismo, aunque muy similar, debido a que las inversiones asociadas a cada uno e ellos son distintas. Esto sucede porque existen distintas cantidades de movimientos de tierra que realizar en cada uno de los puertos.
+
+Los valores que hemos visto anteriormente seran los que utilizaremos para valuar en cuanto se puede otorgar la concesión de cada sistema, o en dado el caso cada elemento del sistema multimodal. Para realizar la valuación de la concesión, se valuara utilizando una tasa de descuento que no incluye el riesgo pais, para este tipo de negocios. El motivo de la no inclusión es porque SIGSA ya es una empresa guatemalteca. En este caso la tasa a utilizar es de `r expected.return2 %>% percent()`
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 
 # Calculo de canones Concesión e Infraestructura-------------------------------------------------
+r.ice = expected.return2
 
 ### Calculo valor de concesion
-pg
+
 concesion.completo <- valor.completo$vp.base %>%   
     canon(tasa.descuento.ice = r.ice, 
           n.canon = n.concesion.multi, 
@@ -755,7 +855,20 @@ concesion.elemento <- concesion.elemento %>%
                      n.concesion.poli, 
                      n.concesion.multi))
 
+concesion.sistema %>% mutate(pago = formattable::currency(pago, digits = 0),
+                             pago.anticipado = formattable::currency(pago.anticipado, digits = 0)) %>% 
+  knitr::kable(col.names = c("Pago", "Pago anticipado","Sistema","Tiempo Concesión"))
 
+
+```
+
+## Segundo Escenario de negociación
+
+En este escenario de negociación SIGSA realiza la inversión en infraestructura. Por esto cobra un canon por concepto de concesión del proyecto y uno adiconal por el uso de la infraestructura. Adicionalmente se percibe un 5% de los ingresos brutos, el cual fue definido como royalty. El 3ero, en este caso, se encarga de la operación y la inversión en superestructura.
+
+Debido a que en este escenario existe también el canon de infraestructura, este debe de ser calculado. Para eso tomaremos las mismas condiciones de pago anticipado y tasa utilizada para el canon de la concesión. El valor del canon será el valor presente de la inversión llevado a pagos durante la duración de la concesión. Se destaca que durante los años en que no existen ingresos, no se realiza pago alguno de los canon. Es hasta que existen ingresos que se materializan los pagos. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 ### Calculo uso infraestructuras
 
 canon.infra.completo <- inversiones.sistema10 %>% 
@@ -810,22 +923,28 @@ canon.infra.elemento$Elemento <- valor.elemento$Elemento
 canon.infra.elemento <- canon.infra.elemento %>% 
   mutate(n = if_else(Elemento == "Poliductos", n.concesion.poli, n.concesion.multi))
 
+canon.infra.sistema %>% 
+  mutate(pago = formattable::currency(pago, digits = 0),
+                             pago.anticipado = formattable::currency(pago.anticipado, digits = 0)) %>% 
+  knitr::kable(col.names = c("Pago", "Pago anticipado","Sistema","Tiempo Concesión"))
+```
 
+```{r, warning=FALSE, include=FALSE}
 
 #### Funcion que crea df "costos.adicionales" que usare para la evaluacion de fen para sistema y un tercero 
 
 calcular.costos.adicionales <- function(df, nombre, pg){
-  costos.adicionales <- data.frame(Año = numeric(df$n),
-                                      Anticipo = numeric(df$n),
-                                      Pago = numeric(df$n))
+  costos.adicionales <- data.frame(Año = numeric(df$n + 1 ),
+                                      Anticipo = numeric(df$n + 1),
+                                      Pago = numeric(df$n + 1 ))
   costos.adicionales[1,] <- c(primer.año, df$pago.anticipado, 0)
-  costos.adicionales$Año <- seq(1:df$n) + primer.año 
+  costos.adicionales$Año <- seq(1:(df$n + 1)) + primer.año - 1
   costos.adicionales$Año <- costos.adicionales$Año %>% as.factor()
   if (pg == 0) {
-  costos.adicionales$Pago[2:df$n] <- df$pago
+  costos.adicionales$Pago[2:(df$n + 1)] <- df$pago
   } else{
   costos.adicionales$Pago[2:(2 + pg)] <- 0
-  costos.adicionales$Pago[(2 + pg):df$n] <- df$pago
+  costos.adicionales$Pago[(2 + pg):(df$n + 1 )] <- df$pago
   }
   costos.adicionales <- costos.adicionales %>% 
     mutate(IVAxCobrar = (Anticipo + Pago)*0.12)
@@ -1026,6 +1145,7 @@ financiamiento.elemento.propios <- inversiones.elemento.propios %>%
 
 impuestos.sistema.3ro <- map2(ingresos.sistema11, inversiones.sistema.3ro, left_join) %>% 
   map2(costos.sistema.3ro, left_join, by = "Año") %>% 
+  map(replace_na, list(IVAxCobrar.y = 0)) %>% 
   map(select, -Inversion, -Royalty, -Ingresos.Brutos, -Costos ) %>% 
   map(mutate,
       IVAxCobrar = IVAxCobrar.x + IVAxCobrar.y,
@@ -1037,6 +1157,7 @@ impuestos.sistema.3ro <- map2(ingresos.sistema11, inversiones.sistema.3ro, left_
 
 impuestos.elemento.3ro <- map2(ingresos.elemento11, inversiones.elemento.3ro, left_join) %>% 
   map2(costos.elemento.3ro, left_join, by = "Año") %>% 
+  map(replace_na, list(IVAxCobrar.y = 0)) %>% 
   map(select, -Inversion, -Royalty, -Ingresos.Brutos, -Costos ) %>% 
   map(mutate,
       IVAxCobrar = IVAxCobrar.x + IVAxCobrar.y,
@@ -1172,21 +1293,19 @@ valor.sistema.fin.propio <- pmap(params.sistema.fin, calcular_vpnf)
 valor.elemento.fin.propio <- pmap(params.elemento.fin, calcular_vpnf)
 
 
-
+valor.sistema.10.3ro
 valor.sistema.10  <- map2(valor.sistema.10.3ro, valor.sistema.fin.3ro, bind_cols) %>% 
   bind_rows(.id = "Sistema")
 
 valor.elemento.10 <- map2(valor.elemento.10.3ro, valor.elemento.fin.3ro, bind_cols) %>% 
   bind_rows(.id = "Elemento")
 
-valor.3ro <- list(valor.sistema.10, valor.elemento.10 )
+valor.3ro.10 <- list(Sistema = valor.sistema.10, Elemento = valor.elemento.10 )
 
-valor.3ro <- valor.3ro %>% 
-  map(select, -flujo.base, -flujo.fin) %>% 
+valor.3ro.10 <- valor.3ro.10 %>% 
+  map(select, -flujo.base, -flujo.fin, -vp.fin) %>% 
   map(mutate, 
       vp.base = formattable::currency(vp.base, digits = 0),
-      vp.fin = formattable::currency(vp.fin, digits = 0),
-      vp.total = vp.base + vp.fin,
       tir = formattable::percent(tir))
 
 
@@ -1197,26 +1316,48 @@ valor.elemento.10.sigsa  <- map2(valor.elemento.10.propio, valor.elemento.fin.pr
   bind_rows(.id = "Elemento")
 
 
-valor.SIGSA <- list(valor.sistema.10.sigsa, valor.elemento.10.sigsa)
+valor.SIGSA.10 <- list(Sistema = valor.sistema.10.sigsa, Elemento = valor.elemento.10.sigsa)
 
 
-valor.SIGSA <- valor.SIGSA %>% 
-  map(select, -flujo.base, -flujo.fin, -tir) %>% 
+valor.SIGSA.10 <- valor.SIGSA.10 %>% 
+  map(select, -flujo.base, -flujo.fin, -vp.fin) %>% 
   map(mutate, 
       vp.base = formattable::currency(vp.base, digits = 0),
-      vp.fin = formattable::currency(vp.fin, digits = 0),
-      vp.total = vp.base + vp.fin)
+      tir     = formattable::percent(tir))
 
-lista <- list(resultado, valor.3ro, valor.SIGSA)
-lista
+valor.3ro.10$Sistema
+valor.SIGSA.10$Elemento %>% filter(Elemento != "Poliductos")
 
+```
+
+### Valor SIGSA
+En este escenario tenemos dos valoraciones, una de SIGSA y la segunda de un 3ro. 
+
+La valoración de SIGSA para cada sistema se puede observar en la tabla siguiente:
+
+`r knitr::kable(valor.SIGSA.10$Sistema, col.names = c("Elemento", "VPN", "TIR"))`
+
+Aca tambien mostramos el valor que se obtendría por cada elemento del Sistema multimodal. En donde podemos observar que ambos puertos son muy convenientes para SIGSA en terminos de VPN y TIR.
+
+`r valor.SIGSA.10$Elemento %>% filter(Elemento != "Poliductos") %>% knitr::kable(col.names = c("Elemento", "VPN", "TIR"))`
+
+### Valor 3ro
+Para este caso, se genera un valor muy similar para ambos sistemas, difiriendo unicamente en la TIR por Sistema.
+`r knitr::kable(valor.3ro.10$Sistema, col.names = c("Elemento", "VPN", "TIR"))`
+
+El desglose de valor por elemento del Sistema Multimodal se puede observar en la siguiente tabla. En donde el mayor beneficio percibido por elemento vendría de la operación del ferrocarril.
+`r valor.3ro.10$Elemento %>% filter(Elemento != "Poliductos") %>% knitr::kable(col.names = c("Elemento", "VPN", "TIR"))`
+
+
+## Tercer escenario de negociación
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 
 # Escenario 00 ------------------------------------------------------------
 
 # Separacion de costos e inversiones de 3ro
 
 ## Sistema
-costos.sistema.3ro <- costos.sistema11 %>% 
+costos.sistema.3ro.00 <- costos.sistema11 %>% 
   map2(valores.concesion.sistema, left_join, by = "Año") %>% 
   map(replace_na, list(Anticipo.concesion = 0, Pago.concesion = 0)) %>% 
   map(mutate, IVAxCobrar = IVAxCobrar.x + IVAxCobrar.y,
@@ -1229,10 +1370,10 @@ costos.sistema.3ro <- costos.sistema11 %>%
   map(select, Año, Costos, IVAxCobrar)
   
 
-inversiones.sistema.3ro <- inversiones.sistema11 
+inversiones.sistema.3ro.00 <- inversiones.sistema11 
 
 #### Elemento
-costos.elemento.3ro <- costos.elemento11 %>% 
+costos.elemento.3ro.00 <- costos.elemento11 %>% 
   map2(valores.concesion.elemento, left_join, by = "Año") %>% 
   map(mutate, IVAxCobrar = IVAxCobrar.x + IVAxCobrar.y,
       Costos = Costos + Anticipo.concesion + Pago.concesion) %>% 
@@ -1243,18 +1384,51 @@ costos.elemento.3ro <- costos.elemento11 %>%
       IVAxCobrar = Costos*0.12) %>% 
   map(select, Año, Costos, IVAxCobrar)
 
-inversiones.elemento.3ro <- inversiones.elemento11
+inversiones.elemento.3ro.00 <- inversiones.elemento11
+
+# Costos e ingresos propios
+
+ingresos.sistema.propios.00 <- map2(ingresos.sistema11, valores.concesion.sistema, full_join, by = "Año") %>% 
+  map(select, Año, Royalty, contains("Anticipo"), contains("Pago")) %>% 
+  map(replace_na, replace = list(Royalty = 0, Anticipo.concesion = 0, Pago.concesion = 0)) %>% 
+  map(mutate, Ingresos.Brutos = Royalty + Anticipo.concesion + Pago.concesion) %>% 
+  map(select, Año, Ingresos.Brutos) %>% 
+  map(mutate, IVAxPagar = Ingresos.Brutos*0.12,
+      Año = as.numeric(as.character(Año))) %>% 
+  map(arrange, Año)
+
+ingresos.elemento.propios.00 <- map2(ingresos.elemento11, valores.concesion.elemento, full_join, by = "Año") %>% 
+  map(select, Año, Royalty, contains("Anticipo"), contains("Pago")) %>% 
+  map(replace_na, replace = list(Royalty = 0, Anticipo.concesion = 0, Pago.concesion = 0)) %>% 
+  map(mutate, Ingresos.Brutos = Royalty + Anticipo.concesion + Pago.concesion) %>% 
+  map(select, Año, Ingresos.Brutos) %>% 
+  map(mutate, IVAxPagar = Ingresos.Brutos*0.12,
+      Año = as.numeric(as.character(Año))) %>% 
+  map(arrange, Año)
+
+
+costos.sistema.propios.00 <- ingresos.sistema.propios.00 %>% 
+  map(mutate, Costos = pct.gastos.comercializacion*Ingresos.Brutos,
+              IVAxCobrar    = Costos*0.12) %>% 
+  map(select, -IVAxPagar, -Ingresos.Brutos)
+
+
+costos.elemento.propios.00 <- ingresos.elemento.propios.00 %>% 
+  map(mutate, Costos = pct.gastos.comercializacion*Ingresos.Brutos,
+              IVAxCobrar    = Costos*0.12) %>% 
+  map(select, -IVAxPagar, -Ingresos.Brutos)
+
 
 # Financiamiento 3ro  ----------------------------------------------
 
-financiamiento.sistema.3ro <- inversiones.sistema.3ro %>% 
+financiamiento.sistema.3ro.00 <- inversiones.sistema.3ro.00 %>% 
   map2(ingresos.sistema11, left_join) %>% 
   map(amortizacion, 
       pct.financiado = pct.financiado,
       n = n,
       r = r)
 
-financiamiento.elemento.3ro <- inversiones.elemento.3ro %>% 
+financiamiento.elemento.3ro.00 <- inversiones.elemento.3ro.00 %>% 
   map2(ingresos.elemento11, left_join) %>% 
   map(amortizacion,
       pct.financiado = pct.financiado,
@@ -1263,8 +1437,8 @@ financiamiento.elemento.3ro <- inversiones.elemento.3ro %>%
 
 # Impuestos
 
-impuestos.sistema.3ro <- map2(ingresos.sistema11, inversiones.sistema.3ro, left_join) %>% 
-  map2(costos.sistema.3ro, left_join, by = "Año") %>% 
+impuestos.sistema.3ro.00 <- map2(ingresos.sistema11, inversiones.sistema.3ro.00, left_join) %>% 
+  map2(costos.sistema.3ro.00, left_join, by = "Año") %>% 
   map(select, -Inversion, -Royalty, -Ingresos.Brutos, -Costos ) %>% 
   map(replace_na, list(IVAxCobrar.y = 0)) %>% 
   map(mutate,
@@ -1273,6 +1447,10 @@ impuestos.sistema.3ro <- map2(ingresos.sistema11, inversiones.sistema.3ro, left_
       IVA.aux2 = IVAxCobrar - IVAxPagar,
       IVA.Neto = if_else(lag(IVA.aux1) < 0 ,IVA.aux2, IVA.aux1)) %>% 
   map(select, -IVAxCobrar.x, -IVAxCobrar.y)
+
+impuestos.sistema.propios.00 <- map2(ingresos.sistema.propios.00, costos.sistema.propios.00, left_join) %>% 
+  map(select, -Ingresos.Brutos, -Costos) %>% 
+   map(mutate,IVA.Neto = IVAxCobrar - IVAxPagar) 
 
 
 impuestos.elemento.3ro <- map2(ingresos.elemento11, inversiones.elemento.3ro, left_join) %>% 
@@ -1285,16 +1463,21 @@ impuestos.elemento.3ro <- map2(ingresos.elemento11, inversiones.elemento.3ro, le
       IVA.Neto = if_else(lag(IVA.aux1) < 0 ,IVA.aux2, IVA.aux1)) %>% 
   map(select, -IVAxCobrar.x, -IVAxCobrar.y)
 
+
+impuestos.elemento.propios.00 <- map2(ingresos.elemento.propios.00, costos.elemento.propios.00, left_join) %>% 
+  map(select, -Ingresos.Brutos, -Costos) %>% 
+   map(mutate,IVA.Neto = IVAxCobrar - IVAxPagar) 
+
 # Valoracion 3ro 00
 
-df.sistema.3ro <- ingresos.sistema11 %>%
-  map2(costos.sistema.3ro, full_join) %>%
+df.sistema.3ro.00 <- ingresos.sistema11 %>%
+  map2(costos.sistema.3ro.00, full_join) %>%
   map(select, -contains("IVA")) %>%
-  map2(inversiones.sistema.3ro, full_join) %>%
+  map2(inversiones.sistema.3ro.00, full_join) %>%
   map(select, -contains("IVA")) %>%
-  map2(financiamiento.sistema.3ro, full_join) %>%
+  map2(financiamiento.sistema.3ro.00, full_join) %>%
   map(select, -Saldo, -Amortizacion) %>%
-  map2(impuestos.sistema.3ro, full_join) %>%
+  map2(impuestos.sistema.3ro.00, full_join) %>%
   map(select, -contains("IVAx")) %>%
   map(replace_na, replace = list(Ingresos.Brutos = 0,
                                  Royalty = 0,
@@ -1308,8 +1491,27 @@ df.sistema.3ro <- ingresos.sistema11 %>%
   map(select, -Royalty)
 
 
+df.sistema.propio.00 <- ingresos.sistema.propios.00 %>% 
+  map2(costos.sistema.propios.00, full_join) %>% 
+  map(select, -contains("IVA")) %>% 
+  map2(impuestos.sistema.propios.00, full_join) %>% 
+  map(mutate, ISR = isr*Ingresos.Brutos,
+              Inversion = 0,
+              Pago = 0,
+              Intereses = 0)
+  
 
-df.elemento.3ro <- ingresos.elemento11 %>%
+df.elemento.propio.00 <- ingresos.elemento.propios.00 %>% 
+  map2(costos.elemento.propios.00, full_join) %>% 
+  map(select, -contains("IVA")) %>% 
+  map2(impuestos.elemento.propios.00, full_join) %>% 
+  map(mutate, ISR = isr*Ingresos.Brutos,
+              Inversion = 0,
+              Pago = 0,
+              Intereses = 0)
+
+
+df.elemento.3ro.00 <- ingresos.elemento11 %>%
   map2(costos.elemento.3ro, full_join) %>%
   map(select, -contains("IVA")) %>%
   map2(inversiones.elemento.3ro, full_join) %>%
@@ -1327,13 +1529,88 @@ df.elemento.3ro <- ingresos.elemento11 %>%
                                  IVA.Neto = 0,
                                  Intereses = 0))
 
-params.sistema$df <- df.sistema.3ro
+## Valor 3ro
+params.sistema$df <- df.sistema.3ro.00
 params.sistema$res <- 1
-params.elemento$df <- df.elemento.3ro
-valor.sistema.00.3ro <-  pmap(params.sistema, calcular_fen)
-params.sistema$res <- 2
-valor.sistema.00.3ro.fen <- pmap(params.sistema, calcular_fen)
-valor.sistema.00.3ro$Energia %>% mutate(vp.base = dollar(vp.base),
-                                        tir     = percent(tir))
-valor.sistema.00.3ro.fen$Energia 
+valor.sistema.00.3ro <-  pmap(params.sistema, calcular_fen) %>% bind_rows( .id = "Sistema")
+params.elemento$df <- df.elemento.3ro.00
+valor.elemento.00.3ro <-  pmap(params.elemento, calcular_fen) %>% bind_rows( .id = "Elemento")
+## Valor SIGSA
+params.sistema$df <- df.sistema.propio.00
+valor.sistema.00.SIGSA <- pmap(params.sistema, calcular_fen) %>% bind_rows( .id = "Sistema")
+params.elemento$df <- df.elemento.propio.00
+valor.elemento.00.SIGSA <- pmap(params.elemento, calcular_fen) %>% bind_rows( .id = "Elemento")
+
+
+
+valor.3ro.00 <- list(Sistema = valor.sistema.00.3ro, Elemento = valor.elemento.00.3ro)
+valor.SIGSA.00 <- list(Sistema = valor.sistema.00.SIGSA, Elemento = valor.elemento.00.SIGSA)
+
+valor.3ro.00 <- valor.3ro.00 %>% 
+  map(select, -flujo.base) %>% 
+  map(mutate, 
+      vp.base = formattable::currency(vp.base, digits = 0),
+      tir     = formattable::percent(tir))
+
+
+valor.SIGSA.00 <- valor.SIGSA.00 %>% 
+  map(select, -flujo.base) %>% 
+  map(mutate, 
+      vp.base = formattable::currency(vp.base, digits = 0),
+      tir     = formattable::percent(tir))
+
+
+```
+
+### Valor SIGSA
+
+La valoración de SIGSA para cada sistema se puede observar en la tabla siguiente, en este caso no se tiene TIR debido a que no existe inversión.
+
+`r knitr::kable(valor.SIGSA.00$Sistema, col.names = c("Sistema","VPN","TIR"))`
+
+### Valor 3ro
+
+La valoración del 3ro para esta modalidad de negociación es la siguiente:
+
+`r knitr::kable(valor.3ro.00$Sistema, col.names = c("Sistema", "VPN", "TIR"))`
+
+
+# Comparación de Escenarios
+
+A continuación realizaremos una comparación de los resultados obtenidos para cada escenario de negociación
+
+```{r, eval=FALSE, include=FALSE}
+
+resultado$Sistema$Negociacion <- "1er.escenario"
+valor.SIGSA.10$Sistema$Negociacion <- "2do.escenario"
+valor.SIGSA.00$Sistema$Negociacion <- "3er.escenario"
+
+valores.sistema <- bind_rows(resultado$Sistema, valor.SIGSA.10$Sistema, valor.SIGSA.00$Sistema)
+valores.sistema$Interesado <- "SIGSA"
+
+
+valor.3ro.10$Sistema$Negociacion <- "2do.escenario"
+valor.3ro.00$Sistema$Negociacion <- "3er.escenario"
+valores.3ro <- bind_rows(valor.3ro.10$Sistema, valor.3ro.00$Sistema)
+valores.3ro$Interesado <- "3ro"
+
+valores.analisis <- bind_rows(valores.sistema, valores.3ro)
+
+
+valores.analisis %>% 
+  ggplot(aes(x = Sistema, y = vp.base, fill = Interesado)) +
+  geom_col(position = "fill") +
+  facet_wrap(~ Negociacion) +
+  theme_axon()
+
+
+valores.analisis %>% 
+  ggplot(aes(x = Sistema, y = vp.base, fill = Interesado)) +
+  geom_col(position = "dodge") +
+  facet_grid(Sistema~ Negociacion)
+
+
+
+
+```
 

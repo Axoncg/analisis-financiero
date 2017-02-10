@@ -469,9 +469,10 @@ modelo.base <- function(n                 = 30,
     expected.return <- rf + beta*(rm - rf)
     financial.data <- data.frame(expected.return, rf, rm,beta)
     financial.data
+    expected.return <- financial.data[["expected.return"]]
   }
   
-  expected.return <- financial.data[["expected.return"]]
+ 
   r.ice <- expected.return
   ### Creación de data frames que sirven de input para el calculo del VP base del 
   ### proyecto y VP del financiamiento en las modalidades: 

@@ -50,7 +50,7 @@ ui <- navbarPage(
                radioButtons(
                  "tasa.retorno.manual",
                  "Tasa de retorno",
-                 choices = list("Manual" = FALSE, "Automatica" =
+                 choices = list("Automatica" = FALSE, "Manual" =
                                   TRUE),
                  selected = TRUE
                ),

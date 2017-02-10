@@ -1,3 +1,71 @@
+---
+title: "Analisis financiero"
+output:
+  html_notebook: default
+  html_document: default
+---
+
+# Introducción
+
+Este documento tiene como objetivo describir el proceso seguido para realizar el análisis de factibilidad economica-financiera del proyecto *Corredor Interoceanico de Guatemala*. Básicamente se revisan tres escenarios de negociación-operación y a estos se les realiza una valuación.
+
+Los escenarios de negociación a analizar en este documento son:
+
+  * Primer escenario:
+    * SIGSA^[SIGSA: Sistema Interoceánico de Guatemala] realiza la inversión en infraestructura y superestructura. Se encarga de la operación.
+  * Segundo Escenario:
+    * SIGSA realiza la inversión en infraestructura. Cobra un canon por concepto de concesión del proyecto, otro canon por el uso de la infraestructura. Adicionalmente se percibe un 5% de los ingresos brutos, definido como royalty.
+    * Un 3ro realiza la inversión en superestructura y se encarga de la operación.
+  * Tercer Escenario:
+    * SIGSA no realiza ninguna inversión. Cobra un canon por concepto de concesión del proyecto y el royalty definido anteriormente. 
+    * Un 3ro realiza la inversión en infraestructura y superestructura. Se encarga de la operación
+
+La metodología de valuación es la siguiente
+
+  1. El valor presente neto del proyecto si el proyecto utilizando el CPC[^CPC] como tasa de descuento. 
+  2. El valor presente neto del flujo de caja
+  3. El valor presente neto del accionista
+  
+[^CPC]: Costo Promedio de Capital o WACC por sus siglas en ingles
+  
+# Datos y consideraciones
+
+## Información principal
+
+La información que se utilizará para la evaluación de este proyecto se encuentra desglosada en distintos documentos, a continuación se listarán los datos a utilizar y sus fuentes.
+
+  * Demanda, Modelo ODEPAL (ILI con datos de ALATEC)
+  * Tarifas, Modelo ODEPAL (ILI)
+  * Costos, Modelo ODEPAL (ILI con datos de ALATEC)
+  * Inversiones, Modelo ODEPAL (ILI con datos de ALATEC)
+
+Cabe destacar, que una vez finalizado este análisis, se procederá a actualizar el modelo de demanda y tarifas, dejando para el final la actualización de los costos e inversiones. La idea principal es que se puedan modificar variables del modelo de demandas y tarifas para saber que impacto tendría en la valuación económica del proyecto.
+
+## Información secundaria
+
+Los datos que se utilizan para realizar el cálculo del costo de capital se toma de la información disponible en la pagina web de [Damodaran](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/home.htm). La información tomada especificamente es:
+
+  * [Betas](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html)
+  * [Tasas](http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html)
+  
+Adicionalmente existen algunos parámetros que se toman como inputs al modelo de evaluación y que tienen incidencia en la valuación del proyecto. Estos son:
+
+  * Duración concesión Sistema Multimodal: `n.multi`
+  * Duración concesión Sistema Energía: `n.poli`
+  * Tasa de financiamiento: `r`
+  * Duración financiamiento: `n`
+  * Tasa valuación canones de concesión: `r.ice`
+  * Tasa de descuento: `CPC`, tomando como inputs la tasa de financiamiento y el valor esperado por los accionistas (CAPM)^[CAPM: Cost asset pricing model por sus siglas en ingles]
+  * Porcentaje de la inversión financiada: `pct.financiado`
+  * Tipo de demanda: `tipo.demanda` Esta puede ser la mínima o máxima, como se establece en el Modelo ODEPAL (ILI)
+  * ISR sobre utilidades: `isr2` Regimen sobre utilidades
+  * Porcentaje de royalty sobre los ingresos: `pct.royalty`
+  * Porcentaje de gastos de comercialización: `0.025`
+  * Porcentaje de pago anticipado canones: `pct.pago.anticipado`
+  * Periodo de gracia pago de intereses: `pg`
+
+
+```{r carga de datos, message=FALSE, warning=FALSE, include=FALSE}
 
 require(shiny)
 require(tidyverse)
@@ -6,6 +74,7 @@ require(stringr)
 require(FinCal)
 require(scales)
 require(purrr)
+require(axonr)
 # # Información utilizada por la función para poder funcionar
 Demanda <- read_excel("app/Datos/Intermodal/Ingresos-2018.xlsx", sheet = "Demanda")
 Tarifas <- read_excel("app/Datos/Intermodal/Ingresos-2018.xlsx", sheet = "Tarifas")
@@ -28,65 +97,110 @@ isr               = 0.07
 isr2              = 0.25
 horizonte         = 2062
 regimen.fiscal    = TRUE ## en donde FALSE indica regimen sobre ingresos
-split.puertos     = 0.5
+split.puertos     = 0.50
 pct.royalty       = 0.05
 pct.gastos.comercializacion = 0.025
-pct.pago.anticipado = 0.05
+pct.pago.anticipado = 0.051
 pg                = 1  ## periodo de gracia canon
 
+```
 
-# Leyendas data frame -----------------------------------------------------
+# Establecimiento de valores información secundaria
 
-## ___@@@xx <- leyenda primaria
-## por ejemplo ingresos.M11 se refiere a los ingresos para la version de
-## inversion en infra y super por parte de sistema
+Cómo se mencionó previamente existen una serie de parametros que se deben de definir a la hora de realizar la evaluación financiera. A continuación definiremos cual es el procedimiento utilizado para definir los valores de estos parámetros.
 
-## ___ <- Es el nombre del df principal
-## @@ <- Se refiere a la parte evaluada, esta puede ser Sistema o Elemento
-## xx <- La primera x indica si sistema realiza inversion en infra y la segunda
-## si la realiza en super
+## Duración de concesión por Sistema
 
-### Combinaciones de escenarios de negociación
-## 11 <- inversion en infra y superestructura por parte de sistema
-## 10 <- inversion en infra por parte de sistema y super por un tercero
-## 00 <- inversion en infra y super por parte de un tercero
+En el caso de los escenarios 2 y 3 de negociación existe una figura que por el momento se conoce como concesión. A lo largo de la vida del proyecto, después de los estudios de ILI, se han hablado de periodos de concesión con distintos interesados. Para el Sistema Multimodal se ha hablado de 50 años y para el Sistema de Energía de 30 años. Se utilizarán estos valores y se establecerá si son adecuados para ambos interesados en este escenario de negociación
 
-### Sistemas
-## M = multimodal completo
-## E = energia completo
-### Completo
-## Sistema =  multimodal + energia
-### Elementos
-## SJ = san jorge
-## SL = san luis
-## F = ferrocarril
-### Tipos de negociacion
-## SJf = san jorge + 1/2 ferrocarril
-## SLF = san luis + 1/2 ferrocarril
+En el caso del financiamiento, se ha establecido un periodo de 30 años para poder realizar los pagos.
 
+## Tasas
 
+```{r, message=FALSE, warning=FALSE, include=FALSE}
 
-# modelo.base <- function(n                 = 30,
-#                         r                 = 0.05, ## Tasa financiamiento
-#                         tasa.descuento    = 0.08,
-#                         pct.financiado    = 0.6,
-#                         tipo.demanda      = "min",
-#                         isr               = 0.07,
-#                         isr2              = 0.25,
-#                         horizonte         = 2062,
-#                         regimen.fiscal    = TRUE, ## en donde FALSE indica regimen sobre ingresos
-#                         split.puertos     = 0.5,
-#                         pct.royalty       = 0.05,
-#                         pct.gastos.comercializacion = 0.025,
-#                         tasa.retorno.manual = FALSE,
-#                         Demanda = Demanda,
-#                         Tarifas = Tarifas,
-#                         Costos  = Costos,
-#                         Inversiones = Inversiones,
-#                         Ingresos.poliducto = Ingresos.poliducto) {
-#   
-  
-  # Demanda -----------------------------------------------------------------
+  if (tasa.retorno.manual == TRUE) {
+    expected.return <- tasa.descuento
+  } else{
+    require(rvest)
+    url <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html"
+    url2 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html"
+    url3 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/wacc.htm"
+    
+    safe_read <- safely(read_html)
+    prueba <- safe_read(url)
+    
+    
+    if (is_null(prueba$result)) {
+      betas <- readRDS("app/Datos/Intermodal/betas2017-01-25.rds")
+      tasas <- readRDS("app/Datos/Intermodal/tasas2017-01-25.rds")
+      costo.deuda <- readRDS("app/Datos/Intermodal/costo.deuda2017-02-09.rds")
+      
+    } else{
+      betas <- read_html(url) %>% 
+        html_nodes(xpath = "/html/body/table") %>% 
+        html_table()
+      
+
+      
+      fecha.consulta <- Sys.Date()
+      # flname <- paste0("app/Datos/Intermodal/betas",fecha.consulta,".rds")
+      # saveRDS(object = betas ,file = flname)
+      
+      tasas <- read_html(url2) %>% 
+        html_table()
+      # flname <- paste0("app/Datos/Intermodal/tasas",fecha.consulta,".rds")
+      # saveRDS(object = tasas ,file = flname)
+      
+      costo.deuda <- read_html(url3) %>% 
+        html_table() %>% 
+        as.data.frame()
+      # flname <- paste0("app/Datos/Intermodal/costo.deuda",fecha.consulta,".rds")
+      # saveRDS(object = costo.deuda ,file = flname)
+    }
+    
+    
+    betas <- as.data.frame(betas)
+    names(betas) <- betas[1,]
+    betas <- betas[c(91,92),c(1,2,3)]
+    beta <- betas$`Average Unlevered Beta` %>% 
+      as.numeric() %>% 
+      mean()
+    
+    tasas <- as.data.frame(tasas)
+    names(tasas) <- tasas[2,]
+    
+    tasas  <- tasas[3:nrow(tasas),] 
+    tasas.promedio <- tail(tasas,4)
+    nombres <- c("periodo","SP500","3month.bill","10year.bond")
+    tasas <- tasas.promedio[1:4] 
+    names(tasas) <- nombres
+    tasas <- tasas[2:nrow(tasas),]
+    
+    rm <- tasas[2,2]
+    rf <- tasas[2,4]
+    rm <- rm %>% str_replace("%","")
+    rm <- as.numeric(rm)/100
+    
+    rf <- rf %>% str_replace("%","")
+    rf <- as.numeric(rf)/100
+    expected.return <- rf + beta*(rm - rf + (2.89 + 3.55)/100)
+    financial.data <- data.frame(expected.return, rf, rm,beta)
+    financial.data
+    expected.return <- financial.data[["expected.return"]]
+    
+    names(costo.deuda) <- costo.deuda[1,]
+    costo.deuda <- costo.deuda[2:nrow(costo.deuda),]
+    costo.deuda <- costo.deuda[c(90,91), c(1,7)]
+    costo.deuda$`Cost of Debt` <- costo.deuda$`Cost of Debt` %>% 
+      str_replace("%","") %>% 
+      as.numeric()/100
+    
+  }
+
+wacc <- expected.return*(1 - pct.financiado) + pct.financiado*mean(costo.deuda$`Cost of Debt`)
+
+# Demanda -----------------------------------------------------------------
   
   Demanda <-   Demanda %>%
     gather(Año,TEUS,-Escenario) %>%
@@ -454,93 +568,7 @@ pg                = 1  ## periodo de gracia canon
     map(select, -contains("aux"))
   
   
-# Valorizacion ------------------------------------------------------------
   
-  ### Calculo de la tasa de retorno esperada
-  
-  
-  if (tasa.retorno.manual == TRUE) {
-    expected.return <- tasa.descuento
-  } else{
-    require(rvest)
-    url <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/totalbeta.html"
-    url2 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html"
-    url3 <- "http://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/wacc.htm"
-    
-    safe_read <- safely(read_html)
-    prueba <- safe_read(url)
-    
-    
-    if (is_null(prueba$result)) {
-      betas <- readRDS("app/Datos/Intermodal/betas2017-01-25.rds")
-      tasas <- readRDS("app/Datos/Intermodal/tasas2017-01-25.rds")
-      costo.deuda <- readRDS("app/Datos/Intermodal/costo.deuda2017-02-09.rds")
-      
-    } else{
-      betas <- read_html(url) %>% 
-        html_nodes(xpath = "/html/body/table") %>% 
-        html_table()
-      
-      
-      
-      fecha.consulta <- Sys.Date()
-      # flname <- paste0("app/Datos/Intermodal/betas",fecha.consulta,".rds")
-      # saveRDS(object = betas ,file = flname)
-      
-      tasas <- read_html(url2) %>% 
-        html_table()
-      # flname <- paste0("app/Datos/Intermodal/tasas",fecha.consulta,".rds")
-      # saveRDS(object = tasas ,file = flname)
-      
-      costo.deuda <- read_html(url3) %>% 
-        html_table() %>% 
-        as.data.frame()
-      # flname <- paste0("app/Datos/Intermodal/costo.deuda",fecha.consulta,".rds")
-      # saveRDS(object = costo.deuda ,file = flname)
-    }
-    
-    
-    betas <- as.data.frame(betas)
-    names(betas) <- betas[1,]
-    betas <- betas[c(91,92),c(1,2,3)]
-    beta <- betas$`Average Unlevered Beta` %>% 
-      as.numeric() %>% 
-      mean()
-    
-    tasas <- as.data.frame(tasas)
-    names(tasas) <- tasas[2,]
-    
-    tasas  <- tasas[3:nrow(tasas),] 
-    tasas.promedio <- tail(tasas,4)
-    nombres <- c("periodo","SP500","3month.bill","10year.bond")
-    tasas <- tasas.promedio[1:4] 
-    names(tasas) <- nombres
-    tasas <- tasas[2:nrow(tasas),]
-    
-    rm <- tasas[2,2]
-    rf <- tasas[2,4]
-    rm <- rm %>% str_replace("%","")
-    rm <- as.numeric(rm)/100
-    
-    rf <- rf %>% str_replace("%","")
-    rf <- as.numeric(rf)/100
-    expected.return <- rf + beta*(rm - rf + (3.55+2.89)/100)
-    financial.data <- data.frame(expected.return, rf, rm,beta)
-    financial.data
-    expected.return <- financial.data[["expected.return"]]
-    
-    names(costo.deuda) <- costo.deuda[1,]
-    costo.deuda <- costo.deuda[2:nrow(costo.deuda),]
-    costo.deuda <- costo.deuda[c(90,91), c(1,7)]
-    costo.deuda$`Cost of Debt` <- costo.deuda$`Cost of Debt` %>% 
-      str_replace("%","") %>% 
-      as.numeric()/100
-    
-  }
-  
-  wacc <- expected.return*(1 - pct.financiado) + pct.financiado*mean(costo.deuda$`Cost of Debt`)
-  
-
   ### Creación de data frames que sirven de input para el calculo del VP base del 
   ### proyecto y VP del financiamiento en las modalidades: 
   ### Sistema completo, portipo de sistema y por elemento del sistema
@@ -1333,7 +1361,73 @@ params.elemento$df <- df.elemento.3ro
 valor.sistema.00.3ro <-  pmap(params.sistema, calcular_fen)
 params.sistema$res <- 2
 valor.sistema.00.3ro.fen <- pmap(params.sistema, calcular_fen)
-valor.sistema.00.3ro$Energia %>% mutate(vp.base = dollar(vp.base),
-                                        tir     = percent(tir))
-valor.sistema.00.3ro.fen$Energia 
+
+
+```
+
+
+Como se describió previamente, se tienen que definir varias tasas que afectan directamente la valuación del proyecto. A continuación se describe como fueron establecidas.
+
+**Costo de Capital**, o el retorno esperado por los accionistas que invertirían en SIGSA, se valuará a través de la metodología de CAPM.
+Para su definición se deben de incluir algunos datos:
+  
+  *  Risk free: Tomamos el promedio geométrico para el periodo 1967-2016 del T-Bond
+  *  Risk Market: Tomamos el promedio geométrico del S&P500 para el mismo periodo
+  `r knitr::kable(tasas, col.names = nombres, row.names = FALSE)`
+  *  Beta: Debido a que no existe información financiera de puentes terrestre, pública, utilizaremos las calculadas por Damodaran para este tipo de firmas alrededor del mundo que califican para las empresas de transporte o transporte por ferrocarril. A estas les sacamos un promedio para obtener la beta de este tipo de proyecto.
+  * Riesgo Pais y Default: Se agrega al risk premium un valor de 3.55% por el riesgo pais y 2.89% por el riesgo de Default basado en la calificación del país.
+  
+  `r knitr:: kable(betas, row.names = FALSE)`
+
+Esto nos da un valor de retorno esperado (Costo de Capital) que se puede ver en la siguiente tabla
+
+  `r knitr::kable(financial.data, row.names = FALSE)`
+
+**Costo de Deuda**, este es obtenido a través del costo de deuda que tienen las mismas empresas analizadas para obtener la deuda. Se toma el promedio de ambas industrias.
+  `r knitr::kable(costo.deuda, row.names = FALSE)`
+
+**Tasa de Descuento**, como se dijo anteriormente, esta sera calculada por el metodo WACC. En ese sentido, en un principio se estableció que un 60% de la inversión del proyecto se hiciera a través de financiamiento. Por lo que usaremos este porcentaje para establecer el wacc. Al realizar los calculos, su valor es de `r percent(wacc)`
+
+
+**Tasa de Descuento, canones**, para evaluar esta categoría se utilizará el valor de retorno esperado para los accionistas.
+
+## Porcentajes
+
+**Porcentaje pago anticipado canones**, este valor se establece en un `r percent(pct.pago.anticipado)`del valor total de la concesión.
+
+**Porcentaje Royalty**, este se estima en un 5% del valor de los ingresos.
+
+
+# Valorización Sistema Energia
+
+```{r}
+tabla <- concesion.sistema %>% filter(Sistema == "Energia") %>% 
+  select(-Sistema) %>% 
+  mutate(pago = dollar(pago),
+         pago.anticipado = dollar(pago.anticipado))
+
+```
+
+En este caso se valorizará la 3ra modalidad de negociación. El valor que representa este negocio a un tercero es de `r dollar(valor.sistema.00.3ro$Energia$vp.base*1e-6)` billones, con una TIR de `r percent(valor.sistema.00.3ro$Energia$tir)`.
+
+El resumen del pagos de la concesión es el siguiente:
+
+`r knitr::kable(tabla, col.names = c("Pago anual", "Pago anticipado", "Periodo utilizado"), caption = "Resumen de pagos concesión")`
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+valor.sistema.00.3ro.fen$Energia %>% 
+  ggplot(aes( x = Año, y = FEN)) + 
+  geom_col(aes( y = Ingresos.Brutos), fill = "green4") +
+  geom_col(aes( y = -Costos - Inversion), fill = "red4") +
+  theme_axon() +
+  geom_line(size = 2, col = "grey") +
+  scale_y_continuous(breaks = pretty_breaks(10), labels = dollar) +
+  ggtitle("Evolución FEN", "Datos en miles de US$")
+
+
+
+  
+```
 
